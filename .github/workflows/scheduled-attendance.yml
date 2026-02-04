@@ -1,0 +1,79 @@
+name: Scheduled Attendance Automation
+
+on:
+  schedule:
+    # Run at 8:30 AM UTC every weekday (adjust timezone as needed)
+    - cron: '30 8 * * 1-5'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  attendance-bot:
+    runs-on: windows-latest  # Use Windows runner for PowerShell script
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install dependencies
+      run: |
+        pip install playwright
+        playwright install chromium
+        
+    - name: Create config file from secrets
+      run: |
+        $config = @{
+          username = "${{ secrets.ERP_USERNAME }}"
+          password = "${{ secrets.ERP_PASSWORD }}"
+          login_url = "${{ secrets.ERP_LOGIN_URL }}"
+          checkin_page_url = "${{ secrets.ERP_CHECKIN_URL }}"
+          headless = $true
+          latitude = [double]"${{ secrets.LATITUDE }}"
+          longitude = [double]"${{ secrets.LONGITUDE }}"
+        }
+        $config | ConvertTo-Json -Depth 10 | Out-File -FilePath "config.json" -Encoding utf8
+        
+    - name: Create logs directory
+      run: |
+        if (!(Test-Path "logs")) {
+          New-Item -ItemType Directory -Path "logs"
+        }
+        
+    - name: Run attendance automation
+      run: |
+        try {
+          python src/auto_attendance.py
+          echo "✅ Attendance automation completed successfully"
+        } catch {
+          echo "❌ Attendance automation failed"
+          exit 1
+        }
+        
+    - name: Upload logs and screenshots
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: attendance-logs-${{ github.run_number }}
+        path: |
+          attendance_log.txt
+          logs/
+          *.png
+        retention-days: 30
+        
+    - name: Display results
+      if: always()
+      run: |
+        if (Test-Path "attendance_log.txt") {
+          echo "📋 Latest log entries:"
+          Get-Content "attendance_log.txt" | Select-Object -Last 10
+        }
+        
+    - name: Notification on failure
+      if: failure()
+      run: |
+        echo "🚨 Attendance automation failed!"
+        echo "Check the uploaded artifacts for error details"
